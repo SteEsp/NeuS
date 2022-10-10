@@ -34,9 +34,9 @@ def load_K_Rt_from_P(filename, P=None):
     return intrinsics, pose
 
 
-class Dataset:
+class DTUDataset:
     def __init__(self, conf):
-        super(Dataset, self).__init__()
+        super(DTUDataset, self).__init__()
         print('Load data: Begin')
         self.device = torch.device('cuda')
         self.conf = conf
@@ -168,4 +168,3 @@ class Dataset:
     def image_at(self, idx, resolution_level):
         img = cv.imread(self.images_lis[idx])
         return (cv.resize(img, (self.W // resolution_level, self.H // resolution_level))).clip(0, 255)
-

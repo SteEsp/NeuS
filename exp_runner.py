@@ -12,13 +12,14 @@ from shutil import copyfile
 from icecream import ic
 from tqdm import tqdm
 from pyhocon import ConfigFactory
-from models.dataset import Dataset
+from models.dtu_dataset import DTUDataset
+from models.blender_dataset import BlenderDataset
 from models.fields import RenderingNetwork, SDFNetwork, SingleVarianceNetwork, NeRF
 from models.renderer import NeuSRenderer
 
 
 class Runner:
-    def __init__(self, conf_path, mode='train', case='CASE_NAME', is_continue=False):
+    def __init__(self, conf_path, dataset_type='dtu', mode='train', case='CASE_NAME', is_continue=False):
         self.device = torch.device('cuda')
 
         # Configuration
@@ -32,7 +33,12 @@ class Runner:
         self.conf['dataset.data_dir'] = self.conf['dataset.data_dir'].replace('CASE_NAME', case)
         self.base_exp_dir = self.conf['general.base_exp_dir']
         os.makedirs(self.base_exp_dir, exist_ok=True)
-        self.dataset = Dataset(self.conf['dataset'])
+        if dataset_type == 'dtu':
+            self.dataset = DTUDataset(self.conf['dataset'])
+        elif dataset_type == 'blender':
+            self.dataset = BlenderDataset(self.conf['dataset'])
+        else:
+            raise NotImplementedError
         self.iter_step = 0
 
         # Training parameters
@@ -377,6 +383,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--conf', type=str, default='./confs/base.conf')
+    parser.add_argument('--dataset_type', type=str, default='dtu')
     parser.add_argument('--mode', type=str, default='train')
     parser.add_argument('--mcube_threshold', type=float, default=0.0)
     parser.add_argument('--is_continue', default=False, action="store_true")
@@ -386,7 +393,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     torch.cuda.set_device(args.gpu)
-    runner = Runner(args.conf, args.mode, args.case, args.is_continue)
+    runner = Runner(args.conf, args.dataset_type, args.mode, args.case, args.is_continue)
 
     if args.mode == 'train':
         runner.train()
