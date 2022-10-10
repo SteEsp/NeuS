@@ -67,7 +67,6 @@ python exp_runner.py --mode train --conf ./confs/womask.conf --dataset_type <dat
 ```shell
 python exp_runner.py --mode train --conf ./confs/wmask.conf -dataset_type <dataset_type> --case <case_name>
 ```
-NB: `blender` dataset is currently not available with this configuration, selecting it will result in errors.
 
 - **Extract surface from trained model** 
 
