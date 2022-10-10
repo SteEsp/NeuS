@@ -25,6 +25,7 @@ class BlenderDataset:
             metas['train'] = json.load(fp)
 
         all_imgs = []
+        all_masks = []
         all_poses = []
         counts = [0]
  
@@ -37,21 +38,31 @@ class BlenderDataset:
         
         meta = metas['train']
         imgs = []
+        masks = []
         poses = []
         for frame in meta['frames'][::1]:
             fname = os.path.join(self.data_dir, frame['file_path'] + '.png')
-            imgs.append(cv.imread(fname))
+            img = cv.imread(fname, flags=cv.IMREAD_UNCHANGED)
+            imgs.append(img)
+            # get alpha channel
+            mask = img[:, :, 3] # alpha channel
+            mask = np.expand_dims(mask, axis=-1)
+            # threshold mask
+            mask = (mask > 0).astype(np.float32)
+            masks.append(mask)
             pose = np.array(frame['transform_matrix'])
             pose = pose @ T
             poses.append(pose)
-        imgs = (np.array(imgs) / 255.).astype(np.float32) # keep all 4 channels (RGBA)
+        imgs = (np.array(imgs) / 255.).astype(np.float32) # RGB
         poses = np.array(poses).astype(np.float32)
         counts.append(counts[-1] + imgs.shape[0])
         all_imgs.append(imgs)
+        all_masks.append(masks)
         all_poses.append(poses)
         
         imgs = np.concatenate(all_imgs, 0)
         imgs = imgs[...,:3]*imgs[...,-1:] + (1.-imgs[...,-1:])
+        masks = np.concatenate(all_masks, 0)
         poses = np.concatenate(all_poses, 0)
 
         # self.render_cameras_name = conf.get_string('render_cameras_name')
@@ -63,7 +74,6 @@ class BlenderDataset:
         # camera_dict = np.load(os.path.join(self.data_dir, self.render_cameras_name))
         # self.camera_dict = camera_dict
         # self.images_lis = sorted(glob(os.path.join(self.data_dir, 'train/*.png')))
-        # self.n_images = len(self.images_lis)
         # self.images_np = np.stack([cv.imread(im_name) for im_name in self.images_lis]) / 256.0
         # self.images_np = self.images_np[...,:3]*self.images_np[...,-1:] + (1.-self.images_np[...,-1:])
         
@@ -95,16 +105,32 @@ class BlenderDataset:
         # self.focal = self.intrinsics_all[0][0, 0]
 
         self.images = torch.from_numpy(imgs.astype(np.float32)).cpu()  # [n_images, H, W, 3]
+        self.masks = torch.from_numpy(masks.astype(np.float32)).cpu()  # [n_images, H, W, 1]
+        self.n_images = self.images.shape[0]
         self.pose_all = torch.from_numpy(poses).float().to(self.device) # [n_images, 4, 4]
     
+        # print("images.shape", self.images.shape)
+        # print("masks.shape", self.masks.shape)
+
         self.H, self.W = self.images.shape[1], self.images.shape[2]
 
         camera_angle_x = float(meta['camera_angle_x'])
         focal = .5 * self.W / np.tan(.5 * camera_angle_x)
         self.focal = torch.tensor(focal).to(self.device) 
-
-        # self.pose_all = torch.stack(self.pose_all).to(self.device)  # [n_images, 4, 4]
         self.image_pixels = self.H * self.W
+
+        intrinsics = np.eye(4)
+        intrinsics[0, 0] = self.focal
+        intrinsics[1, 1] = self.focal
+        intrinsics[0, 2] = .5 * self.W
+        intrinsics[1, 2] = .5 * self.H
+        intrinsics_inv = np.linalg.inv(intrinsics)
+        intrinsics = np.expand_dims(intrinsics, axis=0)
+        intrinsics_inv = np.expand_dims(intrinsics_inv, axis=0)
+        self.intrinsics_all = np.repeat(intrinsics, self.n_images, axis=0)
+        self.intrinsics_all = torch.from_numpy(self.intrinsics_all).float().to(self.device)   
+        self.intrinsics_all_inv = np.repeat(intrinsics_inv, self.n_images, axis=0)
+        self.intrinsics_all_inv = torch.from_numpy(self.intrinsics_all_inv).float().to(self.device)
 
         # Object scale mat: region of interest to **extract mesh**
         self.object_bbox_min = np.array([-1.01, -1.01, -1.01])

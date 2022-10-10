@@ -54,17 +54,20 @@ pip install -r requirements.txt
 
 ### Running
 
+Dataset types available: `dtu`, `blender`.
+
 - **Training without mask**
 
 ```shell
-python exp_runner.py --mode train --conf ./confs/womask.conf --case <case_name>
+python exp_runner.py --mode train --conf ./confs/womask.conf --dataset_type <dataset_type> --case <case_name>
 ```
 
 - **Training with mask**
 
 ```shell
-python exp_runner.py --mode train --conf ./confs/wmask.conf --case <case_name>
+python exp_runner.py --mode train --conf ./confs/wmask.conf -dataset_type <dataset_type> --case <case_name>
 ```
+NB: `blender` dataset is currently not available with this configuration, selecting it will result in errors.
 
 - **Extract surface from trained model** 
 
