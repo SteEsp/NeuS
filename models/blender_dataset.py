@@ -19,7 +19,7 @@ class BlenderDataset:
         self.conf = conf
 
         self.data_dir = conf.get_string('data_dir')
-
+    
         metas = {}
         with open(os.path.join(self.data_dir, 'transforms_{}.json'.format('train')), 'r') as fp:
             metas['train'] = json.load(fp)
@@ -29,19 +29,22 @@ class BlenderDataset:
         all_poses = []
         counts = [0]
  
-        # x -> -x
-        # y -> y
+        # x -> x
+        # y -> -y
         # z -> -z
         T = np.eye(4)
-        T[0, 0] = -1
+        T[0, 0] = 1
+        T[1, 1] = -1
         T[2, 2] = -1
         
         meta = metas['train']
         imgs = []
         masks = []
         poses = []
+        self.images_lis = []
         for frame in meta['frames'][::1]:
             fname = os.path.join(self.data_dir, frame['file_path'] + '.png')
+            self.images_lis.append(fname)
             img = cv.imread(fname, flags=cv.IMREAD_UNCHANGED)
             imgs.append(img)
             # get alpha channel
@@ -61,7 +64,7 @@ class BlenderDataset:
         all_poses.append(poses)
         
         imgs = np.concatenate(all_imgs, 0)
-        imgs = imgs[...,:3]*imgs[...,-1:] + (1.-imgs[...,-1:])
+        imgs = imgs[...,:3]*imgs[...,-1:] # + (1.-imgs[...,-1:])
         masks = np.concatenate(all_masks, 0)
         poses = np.concatenate(all_poses, 0)
 
@@ -111,6 +114,12 @@ class BlenderDataset:
     
         # print("images.shape", self.images.shape)
         # print("masks.shape", self.masks.shape)
+
+        # Scaling (we assume the scene to render is inside a unit sphere at origin)        
+        vectors_norms = torch.norm(self.pose_all[:, :3, 3], dim=1)
+        scale = 1 / torch.max(vectors_norms).item()
+        # scale all vectors
+        self.pose_all[:, :3, 3] *= scale
 
         self.H, self.W = self.images.shape[1], self.images.shape[2]
 
