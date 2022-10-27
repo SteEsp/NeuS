@@ -65,13 +65,13 @@ python exp_runner.py --mode train --conf ./confs/womask.conf --dataset_type <dat
 - **Training with mask**
 
 ```shell
-python exp_runner.py --mode train --conf ./confs/wmask.conf -dataset_type <dataset_type> --case <case_name>
+python exp_runner.py --mode train --conf ./confs/wmask.conf --dataset_type <dataset_type> --case <case_name>
 ```
 
 - **Extract surface from trained model** 
 
 ```shell
-python exp_runner.py --mode validate_mesh --conf <config_file> --case <case_name> --is_continue # use latest checkpoint
+python exp_runner.py --mode validate_mesh --conf <config_file> --case <case_name> --from_latest # use latest checkpoint
 ```
 
 The corresponding mesh can be found in `exp/<case_name>/<exp_name>/meshes/<iter_steps>.ply`.
@@ -79,7 +79,7 @@ The corresponding mesh can be found in `exp/<case_name>/<exp_name>/meshes/<iter_
 - **View interpolation**
 
 ```shell
-python exp_runner.py --mode interpolate_<img_idx_0>_<img_idx_1> --conf <config_file> --case <case_name> --is_continue # use latest checkpoint
+python exp_runner.py --mode interpolate_<img_idx_0>_<img_idx_1> --conf <config_file> --case <case_name> --from_latest # use latest checkpoint
 ```
 
 The corresponding image set of view interpolation can be found in `exp/<case_name>/<exp_name>/render/`.

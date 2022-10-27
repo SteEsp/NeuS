@@ -1,5 +1,6 @@
 import os
 import time
+import lpips
 import logging
 import argparse
 import numpy as np
@@ -12,14 +13,14 @@ from shutil import copyfile
 from icecream import ic
 from tqdm import tqdm
 from pyhocon import ConfigFactory
+from skimage.metrics import structural_similarity as ssim
 from models.dtu_dataset import DTUDataset
 from models.blender_dataset import BlenderDataset
 from models.fields import RenderingNetwork, SDFNetwork, SingleVarianceNetwork, NeRF
 from models.renderer import NeuSRenderer
 
-
 class Runner:
-    def __init__(self, conf_path, dataset_type='dtu', mode='train', case='CASE_NAME', is_continue=False):
+    def __init__(self, conf_path, dataset_type='dtu', mode='train', case='CASE_NAME', from_latest=False):
         self.device = torch.device('cuda')
 
         # Configuration
@@ -58,7 +59,7 @@ class Runner:
         # Weights
         self.igr_weight = self.conf.get_float('train.igr_weight')
         self.mask_weight = self.conf.get_float('train.mask_weight')
-        self.is_continue = is_continue
+        self.from_latest = from_latest
         self.mode = mode
         self.model_list = []
         self.writer = None
@@ -84,7 +85,7 @@ class Runner:
 
         # Load checkpoint
         latest_model_name = None
-        if is_continue:
+        if from_latest:
             model_list_raw = os.listdir(os.path.join(self.base_exp_dir, 'checkpoints'))
             model_list = []
             for model_name in model_list_raw:
@@ -236,14 +237,7 @@ class Runner:
         os.makedirs(os.path.join(self.base_exp_dir, 'checkpoints'), exist_ok=True)
         torch.save(checkpoint, os.path.join(self.base_exp_dir, 'checkpoints', 'ckpt_{:0>6d}.pth'.format(self.iter_step)))
 
-    def validate_image(self, idx=-1, resolution_level=-1):
-        if idx < 0:
-            idx = np.random.randint(self.dataset.n_images)
-
-        print('Validate: iter: {}, camera: {}'.format(self.iter_step, idx))
-
-        if resolution_level < 0:
-            resolution_level = self.validate_resolution_level
+    def render_image(self, idx, resolution_level):
         rays_o, rays_d = self.dataset.gen_rays_at(idx, resolution_level=resolution_level)
         H, W, _ = rays_o.shape
         rays_o = rays_o.reshape(-1, 3).split(self.batch_size)
@@ -263,7 +257,8 @@ class Runner:
                                               cos_anneal_ratio=self.get_cos_anneal_ratio(),
                                               background_rgb=background_rgb)
 
-            def feasible(key): return (key in render_out) and (render_out[key] is not None)
+            def feasible(key): 
+                return (key in render_out) and (render_out[key] is not None)
 
             if feasible('color_fine'):
                 out_rgb_fine.append(render_out['color_fine'].detach().cpu().numpy())
@@ -287,22 +282,8 @@ class Runner:
             normal_img = (np.matmul(rot[None, :, :], normal_img[:, :, None])
                           .reshape([H, W, 3, -1]) * 128 + 128).clip(0, 255)
 
-        os.makedirs(os.path.join(self.base_exp_dir, 'validations_fine'), exist_ok=True)
-        os.makedirs(os.path.join(self.base_exp_dir, 'normals'), exist_ok=True)
-
-        for i in range(img_fine.shape[-1]):
-            if len(out_rgb_fine) > 0:
-                cv.imwrite(os.path.join(self.base_exp_dir,
-                                        'validations_fine',
-                                        '{:0>8d}_{}_{}.png'.format(self.iter_step, i, idx)),
-                           np.concatenate([img_fine[..., i],
-                                           self.dataset.image_at(idx, resolution_level=resolution_level)]))
-            if len(out_normal_fine) > 0:
-                cv.imwrite(os.path.join(self.base_exp_dir,
-                                        'normals',
-                                        '{:0>8d}_{}_{}.png'.format(self.iter_step, i, idx)),
-                           normal_img[..., i])
-
+        return img_fine, normal_img
+    
     def render_novel_image(self, idx_0, idx_1, ratio, resolution_level):
         """
         Interpolate view between two cameras.
@@ -330,6 +311,37 @@ class Runner:
 
         img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([H, W, 3]) * 256).clip(0, 255).astype(np.uint8)
         return img_fine
+    
+    def validate_image(self, idx=-1, resolution_level=-1):
+        if idx < 0:
+            idx = np.random.randint(self.dataset.n_images)
+
+        print('Validate: iter: {}, camera: {}'.format(self.iter_step, idx))
+
+        if resolution_level < 0:
+            resolution_level = self.validate_resolution_level
+
+        img_fine, normal_img = self.render_image(idx, resolution_level)
+        H, W = img_fine.shape[0:2]
+        
+        true_rgb = self.dataset.image_at(idx, resolution_level=resolution_level)    
+        psnr = 20.0 * np.log10(255.0 / np.sqrt(np.mean(((img_fine.reshape([H, W, 3]) - true_rgb) ** 2))))
+        self.writer.add_scalar('Statistics/validation/psnr', psnr, self.iter_step)
+
+        os.makedirs(os.path.join(self.base_exp_dir, 'validations_fine'), exist_ok=True)
+        os.makedirs(os.path.join(self.base_exp_dir, 'normals'), exist_ok=True)
+
+        for i in range(img_fine.shape[-1]):
+            if len(img_fine) > 0:
+                cv.imwrite(os.path.join(self.base_exp_dir,
+                                        'validations_fine',
+                                        '{:0>8d}_{}_{}.png'.format(self.iter_step, i, idx)),
+                           np.concatenate([img_fine[..., i], true_rgb]))
+            if len(normal_img) > 0:
+                cv.imwrite(os.path.join(self.base_exp_dir,
+                                        'normals',
+                                        '{:0>8d}_{}_{}.png'.format(self.iter_step, i, idx)),
+                           normal_img[..., i])
 
     def validate_mesh(self, world_space=False, resolution=64, threshold=0.0):
         bound_min = torch.tensor(self.dataset.object_bbox_min, dtype=torch.float32)
@@ -371,10 +383,49 @@ class Runner:
             writer.write(image)
 
         writer.release()
+        
+    def full_evaluation(self):
+
+        ## For each image in dataset
+        ## Render at full scale, get PSNR SSIM and LPIPS, average results
+
+        N = self.dataset.n_images
+        psnrs, ssims, lpipss = np.zeros(N), np.zeros(N), np.zeros(N)
+        lpips_fn = lpips.LPIPS(net='alex', version='0.1')
+
+        os.makedirs(os.path.join(self.base_exp_dir, 'eval'), exist_ok=True)
+        for idx in tqdm(range(N), "Running evaluation"):
+            
+            with torch.no_grad():
+                img_fine, _ = self.render_image(idx, 2)
+                H, W = img_fine.shape[0:2]
+                img_fine = torch.from_numpy(img_fine).reshape([H, W, 3]).to(self.device)
+            
+            true_rgb = torch.from_numpy(self.dataset.image_at(idx, resolution_level=2)).float().to(self.device)    
+            psnr = 20.0 * torch.log10(255.0 / ((img_fine - true_rgb) ** 2).mean().sqrt())
+            psnrs[idx] = psnr.item()
+
+            ssims[idx] = ssim(img_fine.cpu().numpy(), true_rgb.cpu().numpy(), channel_axis=-1, data_range=255.0)
+
+            lpipss[idx] = lpips_fn(  # Must normalize in [-1; 1] for LPIPS
+                img_fine.permute(2, 1, 0).unsqueeze(0) / (255), #  / 2) - 1.0, 
+                true_rgb.permute(2, 1, 0).unsqueeze(0) / (255)  #  / 2) - 1.0
+            ).item()
+
+            cv.imwrite(os.path.join(self.base_exp_dir, 'eval', '{}.png'.format(idx)),
+                        np.concatenate([img_fine.cpu().numpy(), true_rgb.cpu().numpy()]))
+
+        np.savetxt(os.path.join(self.base_exp_dir, 'eval', 'psnr.csv'), psnrs, delimiter=",")
+        np.savetxt(os.path.join(self.base_exp_dir, 'eval', 'ssim.csv'), ssims, delimiter=",")
+        np.savetxt(os.path.join(self.base_exp_dir, 'eval', 'lpips.csv'), lpipss, delimiter=",")
+        out = np.zeros(3)
+        out[0], out[1], out[2] = np.mean(psnrs), np.mean(ssims), np.mean(lpipss)
+        np.savetxt(os.path.join(self.base_exp_dir, 'eval', 'avgmetrics.csv'), out, delimiter=",")
+        return out[0], out[1], out[2]
 
 
 if __name__ == '__main__':
-    print('Hello Wooden')
+    print('NeuS Experiment Runner')
 
     torch.set_default_tensor_type('torch.cuda.FloatTensor')
 
@@ -386,19 +437,22 @@ if __name__ == '__main__':
     parser.add_argument('--dataset_type', type=str, default='dtu')
     parser.add_argument('--mode', type=str, default='train')
     parser.add_argument('--mcube_threshold', type=float, default=0.0)
-    parser.add_argument('--is_continue', default=False, action="store_true")
+    parser.add_argument('--from_latest', default=False, action="store_true")
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--case', type=str, default='')
 
     args = parser.parse_args()
 
     torch.cuda.set_device(args.gpu)
-    runner = Runner(args.conf, args.dataset_type, args.mode, args.case, args.is_continue)
+    runner = Runner(args.conf, args.dataset_type, args.mode, args.case, args.from_latest)
 
     if args.mode == 'train':
         runner.train()
     elif args.mode == 'validate_mesh':
         runner.validate_mesh(world_space=True, resolution=512, threshold=args.mcube_threshold)
+    elif args.mode == 'evaluate':
+        avg_psnr, avg_ssim, avg_lpips = runner.full_evaluation() 
+        print('MEAN PSNR: {}\nMEAN SSIM: {}\nMEAN LPIPS: {}'.format(avg_psnr, avg_ssim, avg_lpips))
     elif args.mode.startswith('interpolate'):  # Interpolate views given two image indices
         _, img_idx_0, img_idx_1 = args.mode.split('_')
         img_idx_0 = int(img_idx_0)
