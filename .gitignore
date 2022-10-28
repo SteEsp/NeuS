@@ -155,3 +155,4 @@ public_data
 exp
 tmp
 train_all_NeRF.sh
+.vscode/settings.json

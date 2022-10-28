@@ -92,6 +92,7 @@ class Runner:
                 if model_name[-3:] == 'pth' and int(model_name[5:-4]) <= self.end_iter:
                     model_list.append(model_name)
             model_list.sort()
+            print(model_list)
             latest_model_name = model_list[-1]
 
         if latest_model_name is not None:
@@ -362,7 +363,7 @@ class Runner:
     def interpolate_view(self, img_idx_0, img_idx_1):
         images = []
         n_frames = 60
-        for i in range(n_frames):
+        for i in tqdm(range(n_frames)):
             print(i)
             images.append(self.render_novel_image(img_idx_0,
                                                   img_idx_1,
@@ -396,10 +397,10 @@ class Runner:
         os.makedirs(os.path.join(self.base_exp_dir, 'eval'), exist_ok=True)
         for idx in tqdm(range(N), "Running evaluation"):
             
-            with torch.no_grad():
-                img_fine, _ = self.render_image(idx, 2)
-                H, W = img_fine.shape[0:2]
-                img_fine = torch.from_numpy(img_fine).reshape([H, W, 3]).to(self.device)
+            # with torch.no_grad():
+            img_fine, _ = self.render_image(idx, 2)
+            H, W = img_fine.shape[0:2]
+            img_fine = torch.from_numpy(img_fine).reshape([H, W, 3]).to(self.device)
             
             true_rgb = torch.from_numpy(self.dataset.image_at(idx, resolution_level=2)).float().to(self.device)    
             psnr = 20.0 * torch.log10(255.0 / ((img_fine - true_rgb) ** 2).mean().sqrt())
