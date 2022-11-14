@@ -89,7 +89,7 @@ class Runner:
             model_list_raw = os.listdir(os.path.join(self.base_exp_dir, 'checkpoints'))
             model_list = []
             for model_name in model_list_raw:
-                if model_name[-3:] == 'pth' and int(model_name[5:-4]) <= self.end_iter:
+                if model_name[:4] == 'ckpt' and model_name[-3:] == 'pth' and int(model_name[5:-4]) <= self.end_iter:
                     model_list.append(model_name)
             model_list.sort()
             print(model_list)
@@ -389,6 +389,13 @@ class Runner:
 
         ## For each image in dataset
         ## Render at full scale, get PSNR SSIM and LPIPS, average results
+        
+        # load different nerf bg parameters
+        load_different_background = True
+        if load_different_background:
+            checkpoint = torch.load(os.path.join(self.base_exp_dir, 'checkpoints', 'bg_ckpt_200000.pth'), map_location=self.device)
+            self.nerf_outside.load_state_dict(checkpoint)
+            print("Loaded nerf_bg checkpoint")
 
         N = self.dataset.n_images
         psnrs, ssims, lpipss = np.zeros(N), np.zeros(N), np.zeros(N)
@@ -403,7 +410,22 @@ class Runner:
             img_fine = torch.from_numpy(img_fine).reshape([H, W, 3]).to(self.device)
             
             true_rgb = torch.from_numpy(self.dataset.image_at(idx, resolution_level=2)).float().to(self.device)    
-            psnr = 20.0 * torch.log10(255.0 / ((img_fine - true_rgb) ** 2).mean().sqrt())
+            
+            # Here
+            mask_background = False
+            if mask_background:
+                mask = torch.from_numpy(self.dataset.mask_at(idx, resolution_level=2)).float().to(self.device)
+                mask = (mask[:, :, 0, None] / 255.0)
+                mask[mask < 0.5] = 0.0
+                mask[mask >= 0.5] = 1.0
+                img_fine = img_fine * mask
+                true_rgb = true_rgb * mask
+                psnr = 20.0 * torch.log10(255.0 / (((img_fine - true_rgb) ** 2).sum() / (3 * mask.sum())).sqrt())
+                # masked_file_img = img_fine[mask == 1] 
+                # masked_true_rgb = true_rgb[mask == 1]
+                # psnr = 20.0 * torch.log10(255.0 / ((masked_file_img - masked_true_rgb) ** 2).mean().sqrt())
+            else:
+                psnr = 20.0 * torch.log10(255.0 / ((img_fine - true_rgb) ** 2).mean().sqrt())
             psnrs[idx] = psnr.item()
 
             ssims[idx] = ssim(img_fine.cpu().numpy(), true_rgb.cpu().numpy(), channel_axis=-1, data_range=255.0)

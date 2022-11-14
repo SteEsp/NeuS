@@ -168,3 +168,7 @@ class DTUDataset:
     def image_at(self, idx, resolution_level):
         img = cv.imread(self.images_lis[idx])
         return (cv.resize(img, (self.W // resolution_level, self.H // resolution_level))).clip(0, 255)
+    
+    def mask_at(self, idx, resolution_level):
+        img = cv.imread(self.masks_lis[idx])
+        return (cv.resize(img, (self.W // resolution_level, self.H // resolution_level))).clip(0, 255)
